@@ -1,0 +1,70 @@
+name = "haul-payroll"
+
+# The verifier reads only these paths from the agent's final environment. Must stay top-level:
+# nested under [verifier] the value is silently dropped and the verifier receives nothing.
+artifacts = [
+    # go.mod and the .go files are what the verifier builds from; anything else left in the
+    # module directory, a built binary included, is ignored.
+    "/app/payroll/",
+    "/app/data/",
+    # Collected for completeness only. The verifier empties it and reruns the module.
+    "/app/out/",
+]
+
+[metadata]
+author_name = "anonymous"
+author_email = "anonymous"
+category = "Operations"
+subcategory = "Logistics"
+tags = ["go", "payroll", "line-haul", "exact-format", "tariff"]
+languages = ["go"]
+difficulty = "core"
+expert_time_estimate_hours = 4
+
+difficulty_explanation = """
+The job is a monthly pay run for owner-drivers from three files and a spec, and every figure for every driver is compared with an independent run of the same files. There is no model to fit and nothing to search for. The difficulty is that the spec carries nine rules and each has a plausible reading that is wrong, and a run that gets eight of them right still fails, because the wrong one changes a figure somewhere in the month.
+
+The rules and the wrong readings beside them: hours round up to the next quarter, not to the nearest, and a run already on a quarter stays there; the first drop is part of the run so a single-drop run pays nothing for drops; the distance band covers the whole run at one rate, not a marginal rate across the bands, and the boundary is at or under; the weekly cap is Monday to Sunday by start date, runs settle in start date order with ties by run id, and the run that crosses the cap is split rather than paid whole at either rate; a cancellation after dispatch pays a flat fee and nothing else, a cancellation before pays nothing and is not counted; rows for drivers not on the book are dropped and counted, whatever their status; fuel is a percentage of distance pay only; a long run supplement starts at the threshold, not above it; and every rounding happens per run on its own component, never on a total. The shipped month has rows sitting on every one of those boundaries, planted by the generator, and the held-back month has a different tariff, so a figure copied from the shipped run is wrong there.
+
+Each rule was proven to bite on its own. For every rule there is an arm that is the reference with only that rule taken the wrong way, and every one of them scores 0 on the shipped month. That is what makes this a spec-precision task rather than a formatting one: the output is whole numbers only, no decimals anywhere, so there is no representation to get wrong, and the parse is by key, so spacing and key order do not matter. What is left is reading each sentence of the spec and doing exactly that.
+"""
+
+solution_explanation = """
+The reference is one Go file with no dependencies. It parses the kilometres into hundredths, the hours into thousandths and the tariff into pence and quarters, so that nothing passes through a float and nothing is rounded twice. It drops rows for drivers not on the book and counts them, splits the remaining rows by status, and settles each driver's completed runs in start date then run id order, tracking the full-rate quarters used in each Monday to Sunday week so the run that crosses the cap is split between the two rates. Each component is rounded half up per run where the spec says so and summed. The output is marshalled with the field names the spec gives, drivers sorted by id.
+
+The verifier's expected pay run is a separate implementation in Python integers, written from the spec without looking at the Go, and the two agree figure for figure on both months. solution/generate_month.py regenerates the shipped month and the held-back one from their seeds, boundary rows included.
+"""
+
+verification_explanation = """
+The verifier runs in its own container. It collects the module directory, the data directory and the output directory as artifacts, but it builds from the shipped go.mod and the .go files it finds under /app/payroll and nothing else, so a binary the agent built or a stray file does not matter. The collected go.mod is compared byte for byte with the shipped one and the result is a test, since the instruction says to leave it alone. The build runs as an unprivileged user with cgo off and no module downloads. The built binary then runs twice, once on the month that shipped and once on a month baked into the image with a different tariff and different drivers, and each run's payroll.json is staged root-only, regular files only.
+
+The binary runs with every compiler, interpreter and shell on the box, the Go toolchain including its compiler and linker under pkg/tool, python, perl, awk, bash and sh among them, closed to the build user by file mode for the seconds the binary runs and reopened straight after, with a trap that reopens them if the script dies in between, so the pay run cannot be handed to another program or to a script the binary carries; the instruction says so. The binary is started directly rather than through a shell, from /app/payroll, the working directory the instruction's own command gives it, so a program that resolves the files relative to that directory finds them where it would under that command; oracle_cwd_payroll, the reference with every path relative to it, scores 1. Root is unaffected, and the verifier's own shell is already running.
+
+The expected pay run for each month is computed inside the tests by an independent Python implementation from the same three files, and every figure for every driver is compared exactly. Nine checks run per month, plus the go.mod check and a byte comparison of the shipped data files against the issued copies, which the instruction names: the report is one object with the three top level keys, one entry per driver on the book in driver id order with every field a whole number, each driver's total is the sum of its six pence components and the grand total the sum of the drivers, unmatched_runs matches, and every driver's figures match. All reads open with O_NOFOLLOW. There are no tolerances and no regular expressions: the figures are integers by construction, and the document is parsed by key.
+
+The rules were proven to bite one at a time. Ten arms are each the reference with a single rule taken the plausible wrong way, rounding to the nearest quarter, paying every drop, charging the distance bands marginally, putting fuel on the whole total, paying the long run supplement only above the threshold, ignoring the weekly cap, paying a late cancellation as a run, keeping rows for drivers not on the book, settling ties in the wrong order, and starting the week on Sunday, and each scores 0. A program that writes the shipped month's figures as constants scores 0 on the held-back month, whose tariff differs. The oracle scores 1 and the stub 0.
+"""
+
+relevant_experience = """
+I have written and maintained settlement code for subcontracted transport, where the disputes are never about the arithmetic being hard and always about which reading of a rule the contract meant, and I have shipped two tasks in this format that were accepted on the strength of rules each proven to fail alone. The habit I bring is the one the spec here follows: every rounding is named, every boundary says at or over, and the held-back month is made to have a different tariff so nothing can be pasted.
+"""
+
+[verifier]
+# Two runs of a dependency-free Go module, built once. 1800 is the floor and leaves no headroom.
+timeout_sec = 3600
+environment_mode = "separate"
+network_mode = "no-network"
+
+[agent]
+timeout_sec = 5400
+network_mode = "no-network"
+
+# Must be "public" on every task: the environment phase builds the image and installs the solve
+# harness, and an offline baseline kills every attempt before the agent starts. The task itself is
+# air-gapped, with the agent and verifier phases both no-network.
+[environment]
+network_mode = "public"
+build_timeout_sec = 900
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240

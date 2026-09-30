@@ -1,0 +1,12 @@
+{
+  "quarter_hour_pence": 410,
+  "drop_pence": 300,
+  "band_a_max_km": 60.0,
+  "band_a_km_pence": 45,
+  "band_b_km_pence": 38,
+  "long_run_hours": 10.0,
+  "long_run_pence": 3000,
+  "fuel_percent": 6.2,
+  "weekly_cap_hours": 48.0,
+  "cancel_after_pence": 1500
+}
